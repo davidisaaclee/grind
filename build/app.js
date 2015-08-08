@@ -12356,20 +12356,38 @@
 
 },{}],2:[function(require,module,exports){
 module.exports = {
-  BoostFactor: 3,
-  MoveFactor: 50,
-  AirMoveFactor: 10,
-  InitialJumpFactor: 900,
-  HighJumpFactor: 60,
-  HighJumpCooldownTime: 150,
+  WorldGravity: 2000,
+  MaximumWalkSpeed: 500,
+  MoveFactor: 20,
+  AirMoveFactor: 5,
+  GravityConstant: 2000,
+  InitialJumpVelocity: 500,
+  InitialJumpFactor: 20,
+  HighJumpFactor: 20,
+  InitialJumpCooldownTime: 50,
+  HighJumpCooldownTime: 100,
+  GrindCooldownTime: 100,
   PlayerBodyProperties: {
-    bounce: 0,
+    bounce: {
+      x: 0,
+      y: 0
+    },
     collideWorldBounds: true,
-    drag: 1,
-    friction: 0.2,
-    gravityScale: 1,
-    maxSpeed: 999
-  }
+    friction: {
+      x: 0.2,
+      y: 0.2
+    },
+    gravity: {
+      x: 0,
+      y: 0
+    },
+    allowGravity: false
+  },
+  MinGrappleSpeed: 500,
+  GrappleBodyProperties: {
+    allowGravity: false
+  },
+  DefaultGrappleVelocity: new Phaser.Point(1500, -2000)
 };
 
 
@@ -12434,16 +12452,24 @@ k = require('Constants');
 PlayerState = require('PlayerState');
 
 Player = (function() {
-  function Player(game1, x, y, spriteKey, mode) {
+  function Player(game1, x, y, spriteKey, mode, options) {
     var State;
     this.game = game1;
     if (mode == null) {
       mode = 0;
     }
+    if (options == null) {
+      options = {};
+    }
+    _.defaults(options, {
+      walkableGroups: [],
+      grindableGroups: [],
+      grappleableGroups: []
+    });
     this.sprite = this.game.add.sprite(x, y, spriteKey);
     this.sprite.animations.add('left', [0, 1, 2, 3], 10, true);
     this.sprite.animations.add('right', [5, 6, 7, 8], 10, true);
-    this.game.physics.ninja.enable(this.sprite);
+    this.game.physics.arcade.enable(this.sprite);
     _.assign(this.sprite.body, k.PlayerBodyProperties);
     this._modes = (function() {
       var i, len, ref, results;
@@ -12451,61 +12477,39 @@ Player = (function() {
       results = [];
       for (i = 0, len = ref.length; i < len; i++) {
         State = ref[i];
-        results.push(new State);
+        results.push(new State(this, this.game));
       }
       return results;
-    })();
+    }).call(this);
+    this._modes[PlayerState.GRAPPLE].addGrappleable(options.grappleableGroups);
     this.setMode(mode);
-    this.walkableGroups = [];
-    this.grindableGroups = [];
+    this.grindableGroups = options.grindableGroups, this.walkableGroups = options.walkableGroups;
   }
 
   Player.prototype.update = function(game, input) {
-    console.log(this.sprite.body.shape.velocity);
+    if (!(input.keys.left.isDown && input.keys.right.isDown)) {
+      if (input.keys.left.isDown) {
+        this.facing = Phaser.LEFT;
+      } else if (input.keys.right.isDown) {
+        this.facing = Phaser.RIGHT;
+      }
+    }
     return this.mode.update(this, game, input);
   };
 
-  Player.prototype.checkWalk = function(game, input) {
+  Player.prototype.continueWalk = function(game, input) {
     var i, len, ref, results, walkOn;
     ref = this.walkableGroups;
     results = [];
     for (i = 0, len = ref.length; i < len; i++) {
       walkOn = ref[i];
-      results.push(game.physics.ninja.collide(this.sprite, walkOn, (function(_this) {
-        return function() {
-          return _this.setMode(PlayerState.WALKING);
-        };
-      })(this)));
+      results.push(game.physics.arcade.collide(this.sprite, walkOn));
     }
     return results;
   };
 
-  Player.prototype.checkGrind = function(game, input) {
-    var grindOn, i, len, ref, results;
-    ref = this.grindableGroups;
-    results = [];
-    for (i = 0, len = ref.length; i < len; i++) {
-      grindOn = ref[i];
-      results.push(game.physics.ninja.overlap(this.sprite, grindOn, (function(_this) {
-        return function(player, rail) {
-          return _this.setMode(PlayerState.GRINDING, {
-            rail: rail
-          });
-        };
-      })(this)));
-    }
-    return results;
-  };
-
-  Player.prototype.continueGrind = function(game, input) {
-    var grindOn, i, len, ref, results;
-    ref = this.grindableGroups;
-    results = [];
-    for (i = 0, len = ref.length; i < len; i++) {
-      grindOn = ref[i];
-      results.push(game.physics.ninja.collide(this.sprite, grindOn));
-    }
-    return results;
+  Player.prototype.continueGrind = function(game, input, rail) {
+    return game.physics.arcade.collide(this.sprite, rail);
   };
 
   Player.prototype.addWalkable = function(group) {
@@ -12517,7 +12521,7 @@ Player = (function() {
   };
 
   Player.prototype.setMode = function(stateCode, data) {
-    var newMode, ref;
+    var newMode, ref, ref1;
     if ((this.modeCode != null) && this.modeCode === stateCode) {
       return;
     }
@@ -12532,10 +12536,13 @@ Player = (function() {
         debugger;
       }
     }).call(this);
-    console.log(newMode.name);
     if (newMode != null) {
+      console.log('transitioning from', (ref1 = this.mode) != null ? ref1.name : void 0, ' to', newMode.name);
       this.mode = newMode;
       this.modeCode = stateCode;
+    } else {
+      console.log('idk what happen');
+      debugger;
     }
     return this.mode.enter(this, this.game, data);
   };
@@ -12548,7 +12555,7 @@ module.exports = Player;
 
 
 },{"Constants":2,"PlayerState":5,"lodash":1}],5:[function(require,module,exports){
-var Falling, Grinding, Jumping, PlayerState, Walking, _, k, modeCodes,
+var Fall, Grapple, Grind, Jump, PlayerState, Walk, _, airMovement, k, modeCodes,
   extend = function(child, parent) { for (var key in parent) { if (hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
   hasProp = {}.hasOwnProperty;
 
@@ -12556,10 +12563,23 @@ k = require('Constants');
 
 _ = require('lodash');
 
+modeCodes = {
+  WALK: 0,
+  JUMP: 1,
+  FALL: 2,
+  GRIND: 3,
+  GRAPPLE: 4
+};
+
 PlayerState = (function() {
   function PlayerState() {}
 
-  PlayerState.prototype.name = 'none';
+  PlayerState.prototype.name = 'NONE';
+
+  PlayerState.prototype.accept = function(player, game, input, out_data) {
+    console.log('You need to override `accept()`.');
+    return false;
+  };
 
   PlayerState.prototype.enter = function(player, game, data) {};
 
@@ -12569,201 +12589,397 @@ PlayerState = (function() {
     return console.log('You need to override `update()`.');
   };
 
+  PlayerState.prototype.checkAccepts = function(player, game, input, stateStack) {
+    var i, len, out_data, state;
+    for (i = 0, len = stateStack.length; i < len; i++) {
+      state = stateStack[i];
+      out_data = {};
+      if (state.accept(player, game, input, out_data)) {
+        player.setMode(modeCodes[state.name], out_data);
+        return state;
+      }
+    }
+    return null;
+  };
+
   return PlayerState;
 
 })();
 
-modeCodes = {
-  WALKING: 0,
-  JUMPING: 1,
-  FALLING: 2,
-  GRINDING: 3
+airMovement = function(player, game, input) {
+  if (!player.sprite.body.touching.down) {
+    player.sprite.body.velocity.y += k.GravityConstant * game.time.physicsElapsed;
+  }
+  switch (false) {
+    case !input.keys.left.isDown:
+      player.sprite.body.velocity.x += -k.AirMoveFactor;
+      return player.sprite.animations.play('left');
+    case !input.keys.right.isDown:
+      player.sprite.body.velocity.x += k.AirMoveFactor;
+      return player.sprite.animations.play('right');
+    default:
+      player.sprite.animations.stop();
+      return player.sprite.frame = 4;
+  }
 };
 
-Walking = (function(superClass) {
-  extend(Walking, superClass);
+Walk = (function(superClass) {
+  extend(Walk, superClass);
 
-  function Walking() {
-    return Walking.__super__.constructor.apply(this, arguments);
+  function Walk() {
+    return Walk.__super__.constructor.apply(this, arguments);
   }
 
-  Walking.prototype.name = 'walking';
+  Walk.prototype.name = 'WALK';
 
-  Walking.prototype.enter = function(player, game, data) {};
+  Walk.prototype.accept = function(player, game, input) {
+    var i, len, ref, walkOn, walked;
+    walked = false;
+    ref = player.walkableGroups;
+    for (i = 0, len = ref.length; i < len; i++) {
+      walkOn = ref[i];
+      game.physics.arcade.collide(player.sprite, walkOn, (function(_this) {
+        return function() {
+          return walked = true;
+        };
+      })(this));
+    }
+    return walked;
+  };
 
-  Walking.prototype.exit = function(player, game) {};
+  Walk.prototype.enter = function(player, game, data) {};
 
-  Walking.prototype.update = function(player, game, input) {
+  Walk.prototype.exit = function(player, game) {};
+
+  Walk.prototype.update = function(player, game, input) {
+    var v_;
     switch (false) {
       case !input.keys.left.isDown:
-        player.sprite.body.moveLeft(k.MoveFactor);
+        v_ = player.sprite.body.velocity.x - k.MoveFactor;
+        if ((Math.abs(v_)) < k.MaximumWalkSpeed) {
+          player.sprite.body.velocity.x = v_;
+        }
         player.sprite.animations.play('left');
         break;
       case !input.keys.right.isDown:
-        player.sprite.body.moveRight(k.MoveFactor);
+        v_ = player.sprite.body.velocity.x + k.MoveFactor;
+        if ((Math.abs(v_)) < k.MaximumWalkSpeed) {
+          player.sprite.body.velocity.x = v_;
+        }
         player.sprite.animations.play('right');
         break;
       default:
         player.sprite.animations.stop();
         player.sprite.frame = 4;
     }
-    if (input.keys.jump.edge.down) {
-      player.setMode(modeCodes.JUMPING);
-    }
-    player.checkGrind(game, input);
-    return player.checkWalk(game, input);
+    player.continueWalk(game, input);
+    return this.checkAccepts(player, game, input, [player._modes[modeCodes.GRAPPLE], player._modes[modeCodes.JUMP], player._modes[modeCodes.GRIND]]);
   };
 
-  return Walking;
+  return Walk;
 
 })(PlayerState);
 
-Jumping = (function(superClass) {
-  extend(Jumping, superClass);
+Jump = (function(superClass) {
+  extend(Jump, superClass);
 
-  function Jumping() {
-    return Jumping.__super__.constructor.apply(this, arguments);
+  function Jump() {
+    return Jump.__super__.constructor.apply(this, arguments);
   }
 
-  Jumping.prototype.name = 'jumping';
+  Jump.prototype.name = 'JUMP';
 
-  Jumping.prototype.enter = function(player, game, data) {
+  Jump.prototype.accept = function(player, game, input) {
+    return input.keys.jump.edge.down;
+  };
+
+  Jump.prototype.enter = function(player, game, data) {
+    player.sprite.body.velocity.y = -k.InitialJumpVelocity;
     this.timer = this.startHighJumpCooldown(player, game);
+    this.willFall = false;
     return this.applyInitialJumpForce(player);
   };
 
-  Jumping.prototype.exit = function(player, game) {
-    return this.timer.stop();
+  Jump.prototype.exit = function(player, game) {
+    this.timer.stop();
+    return this.timer.destroy();
   };
 
-  Jumping.prototype.update = function(player, game, input) {
-    if (input.keys.jump.isDown) {
-      this.applyHighJumpForce(player);
+  Jump.prototype.update = function(player, game, input) {
+    var falling;
+    if (this.timer.ms < k.InitialJumpCooldownTime) {
+      this.applyInitialJumpForce(player);
+      if (!input.keys.jump.isDown) {
+        this.willFall = true;
+      }
     } else {
-      player.setMode(modeCodes.FALLING);
+      falling = this.willFall || !input.keys.jump.isDown || this.timer.ms > (k.HighJumpCooldownTime + k.InitialJumpCooldownTime);
+      if (falling) {
+        player.setMode(modeCodes.FALL);
+        return;
+      } else {
+        this.applyHighJumpForce(player);
+      }
     }
-    switch (false) {
-      case !input.keys.left.isDown:
-        player.sprite.body.moveLeft(k.AirMoveFactor);
-        player.sprite.animations.play('left');
-        break;
-      case !input.keys.right.isDown:
-        player.sprite.body.moveRight(k.AirMoveFactor);
-        player.sprite.animations.play('right');
-        break;
-      default:
-        player.sprite.animations.stop();
-        player.sprite.frame = 4;
-    }
-    player.checkGrind(game, input);
-    return player.checkWalk(game, input);
+    airMovement(player, game, input);
+    return this.checkAccepts(player, game, input, [player._modes[modeCodes.GRAPPLE], player._modes[modeCodes.GRIND], player._modes[modeCodes.WALK]]);
   };
 
-  Jumping.prototype.applyInitialJumpForce = function(player) {
-    return player.sprite.body.moveUp(k.InitialJumpFactor);
+  Jump.prototype.applyInitialJumpForce = function(player) {
+    return player.sprite.body.velocity.y += -k.InitialJumpFactor;
   };
 
-  Jumping.prototype.applyHighJumpForce = function(player) {
-    return player.sprite.body.moveUp(k.HighJumpFactor);
+  Jump.prototype.applyHighJumpForce = function(player) {
+    return player.sprite.body.velocity.y -= k.HighJumpFactor;
   };
 
-  Jumping.prototype.startHighJumpCooldown = function(player, game) {
+  Jump.prototype.startHighJumpCooldown = function(player, game) {
     var cooldown;
-    cooldown = game.time.create(true);
-    cooldown.add(k.HighJumpCooldownTime, (function(_this) {
-      return function() {
-        return player.setMode(modeCodes.FALLING);
-      };
-    })(this));
+    cooldown = game.time.create(false);
     cooldown.start();
     return cooldown;
   };
 
-  return Jumping;
+  return Jump;
 
 })(PlayerState);
 
-Falling = (function(superClass) {
-  extend(Falling, superClass);
+Fall = (function(superClass) {
+  extend(Fall, superClass);
 
-  function Falling() {
-    return Falling.__super__.constructor.apply(this, arguments);
+  function Fall() {
+    return Fall.__super__.constructor.apply(this, arguments);
   }
 
-  Falling.prototype.name = 'falling';
+  Fall.prototype.name = 'FALL';
 
-  Falling.prototype.enter = function(player, game, data) {};
-
-  Falling.prototype.exit = function(player, game) {};
-
-  Falling.prototype.update = function(player, game, input) {
-    switch (false) {
-      case !input.keys.left.isDown:
-        player.sprite.body.moveLeft(k.AirMoveFactor);
-        player.sprite.animations.play('left');
-        break;
-      case !input.keys.right.isDown:
-        player.sprite.body.moveRight(k.AirMoveFactor);
-        player.sprite.animations.play('right');
-        break;
-      default:
-        player.sprite.animations.stop();
-        player.sprite.frame = 4;
-    }
-    player.checkGrind(game, input);
-    return player.checkWalk(game, input);
+  Fall.prototype.accept = function(player, game, input) {
+    return !player.sprite.body.touching.down;
   };
 
-  return Falling;
+  Fall.prototype.enter = function(player, game, data) {};
+
+  Fall.prototype.exit = function(player, game) {};
+
+  Fall.prototype.update = function(player, game, input) {
+    airMovement(player, game, input);
+    return this.checkAccepts(player, game, input, [player._modes[modeCodes.GRAPPLE], player._modes[modeCodes.WALK], player._modes[modeCodes.GRIND]]);
+  };
+
+  return Fall;
 
 })(PlayerState);
 
-Grinding = (function(superClass) {
-  extend(Grinding, superClass);
+Grind = (function(superClass) {
+  extend(Grind, superClass);
 
-  function Grinding() {
-    return Grinding.__super__.constructor.apply(this, arguments);
+  Grind.prototype.name = 'GRIND';
+
+  function Grind(player, game) {
+    var r;
+    this.canAccept = true;
+    this.cooldownTimer = game.time.create(true);
+    this.cooldownTimer.add(0, (function(_this) {
+      return function() {
+        return _this.canAccept = false;
+      };
+    })(this));
+    r = (function(_this) {
+      return function() {
+        _this.canAccept = true;
+        _this.cooldownTimer = game.time.create(true);
+        _this.cooldownTimer.add(0, function() {
+          return _this.canAccept = false;
+        });
+        return _this.cooldownTimer.add(k.GrindCooldownTime, r);
+      };
+    })(this);
+    this.cooldownTimer.add(k.GrindCooldownTime, r);
   }
 
-  Grinding.prototype.name = 'grinding';
-
-  Grinding.prototype.enter = function(player, game, data) {
-    this.rail = data.rail;
-    if (player.sprite.bottom > this.rail.body.y) {
-      player.sprite.body.y = this.rail.body.y;
+  Grind.prototype.accept = function(player, game, input, out_data) {
+    var grindOn, ground, i, len, onRail, ref;
+    if (!(this.canAccept && input.keys.grind.isDown)) {
+      return false;
     }
-    this.popped = _.pick(player.sprite.body, ['friction']);
+    ground = false;
+    onRail = null;
+    ref = player.grindableGroups;
+    for (i = 0, len = ref.length; i < len; i++) {
+      grindOn = ref[i];
+      game.physics.arcade.overlap(player.sprite, grindOn, (function(_this) {
+        return function(player, rail) {
+          onRail = rail;
+          return ground = true;
+        };
+      })(this));
+    }
+    out_data.rail = onRail;
+    return ground;
+  };
+
+  Grind.prototype.enter = function(player, game, data) {
+    this.rail = data.rail;
+    player.sprite.body.velocity.y = 0;
+    this.popped = _.pick(player.sprite.body, 'friction');
     return _.assign(player.sprite.body, {
       friction: 0
     });
   };
 
-  Grinding.prototype.exit = function(player, game) {
-    return _.assign(player.sprite.body, this.popped);
+  Grind.prototype.exit = function(player, game) {
+    _.assign(player.sprite.body, this.popped);
+    return this.cooldownTimer.start();
   };
 
-  Grinding.prototype.update = function(player, game, input) {
-    if (input.keys.jump.edge.down) {
-      console.log('grind -> jump');
-      player.setMode(modeCodes.JUMPING);
+  Grind.prototype.update = function(player, game, input) {
+    var counter, eject, switchMode;
+    player.continueGrind(game, input, this.rail);
+    counter = 0;
+    while ((player.sprite.bottom > this.rail.top) && counter < 5000) {
+      counter++;
+      player.sprite.y -= player.sprite.bottom - this.rail.top + 1;
     }
-    return player.continueGrind(game, input);
+    switchMode = this.checkAccepts(player, game, input, [player._modes[modeCodes.GRAPPLE], player._modes[modeCodes.JUMP]]);
+    if (switchMode == null) {
+      eject = player.sprite.body.x > this.rail.right || player.sprite.body.x < this.rail.left;
+      if (eject) {
+        return player.setMode(modeCodes.FALL);
+      }
+    }
   };
 
-  return Grinding;
+  return Grind;
+
+})(PlayerState);
+
+Grapple = (function(superClass) {
+  extend(Grapple, superClass);
+
+  Grapple.prototype.name = 'GRAPPLE';
+
+  function Grapple(player, game, grappleableGroups) {
+    this.grappleableGroups = grappleableGroups != null ? grappleableGroups : [];
+    this.grappleSprite = game.add.sprite(0, 0, 'star');
+    game.physics.arcade.enable(this.grappleSprite);
+    _.extend(this.grappleSprite.body, k.GrappleBodyProperties);
+    this.grappleSprite.exists = false;
+    this.grappleActive = false;
+  }
+
+  Grapple.prototype.accept = function(player, game, input, out_data) {
+    var defaultGrappleVelocity, didGrapple, grappleOn, i, len, ref;
+    if (this.grappleActive) {
+      defaultGrappleVelocity = player.facing === Phaser.RIGHT ? k.DefaultGrappleVelocity : Phaser.Point.multiply(k.DefaultGrappleVelocity, new Phaser.Point(-1, 1));
+      this.grappleSprite.body.velocity = Phaser.Point.add(defaultGrappleVelocity, player.sprite.body.velocity);
+      if (input.keys.grapple.edge.up) {
+        this._resetGrapple(player, game);
+        return false;
+      }
+      didGrapple = false;
+      ref = this.grappleableGroups;
+      for (i = 0, len = ref.length; i < len; i++) {
+        grappleOn = ref[i];
+        game.physics.arcade.overlap(this.grappleSprite, grappleOn, function() {
+          return didGrapple = true;
+        });
+      }
+      return didGrapple;
+    } else {
+      if (input.keys.grapple.edge.down) {
+        this._emitGrapple(player, game);
+      }
+      return false;
+    }
+  };
+
+  Grapple.prototype.enter = function(player, game, data) {
+    var project, tangent, tangentVelocity;
+    this.grappleSprite.body.velocity = new Phaser.Point(0, 0);
+    this.clockwise = this.grappleSprite.body.x < player.sprite.body.x;
+    tangent = (function(_this) {
+      return function() {
+        if (_this.clockwise) {
+          return Phaser.Point.rperp(Phaser.Point.subtract(_this.grappleSprite.body.position, player.sprite.body.position));
+        } else {
+          return Phaser.Point.perp(Phaser.Point.subtract(_this.grappleSprite.body.position, player.sprite.body.position));
+        }
+      };
+    })(this)();
+    project = function(a, ontoB) {
+      var scalarProjection, sp;
+      scalarProjection = function(m, ontoN) {
+        return m.dot(ontoN.normalize());
+      };
+      sp = scalarProjection(a, ontoB);
+      return (ontoB.normalize()).multiply(sp, sp);
+    };
+    tangentVelocity = project(player.sprite.body.velocity, tangent);
+    this.speed = tangentVelocity.getMagnitude();
+    if (this.speed < k.MinGrappleSpeed) {
+      this.speed = k.MinGrappleSpeed;
+      tangentVelocity.setMagnitude(this.speed);
+    }
+    return player.sprite.body.velocity = tangentVelocity;
+  };
+
+  Grapple.prototype.exit = function(player, game) {
+    return this._resetGrapple(player, game);
+  };
+
+  Grapple.prototype.update = function(player, game, input) {
+    var tangent;
+    if (input.keys.grapple.isDown) {
+      tangent = (function(_this) {
+        return function() {
+          if (_this.clockwise) {
+            return Phaser.Point.rperp(Phaser.Point.subtract(_this.grappleSprite.body.position, player.sprite.body.position));
+          } else {
+            return Phaser.Point.perp(Phaser.Point.subtract(_this.grappleSprite.body.position, player.sprite.body.position));
+          }
+        };
+      })(this)();
+      tangent.setMagnitude(this.speed);
+      player.sprite.body.velocity = tangent;
+    } else {
+      this._resetGrapple(player, game);
+      player.setMode(modeCodes.FALL);
+    }
+    return this.checkAccepts(player, game, input, [player._modes[modeCodes.WALK], player._modes[modeCodes.GRIND]]);
+  };
+
+  Grapple.prototype.addGrappleable = function(group) {
+    return this.grappleableGroups.push(group);
+  };
+
+  Grapple.prototype._resetGrapple = function(player, game) {
+    this.grappleSprite.exists = false;
+    return this.grappleActive = false;
+  };
+
+  Grapple.prototype._emitGrapple = function(player, game) {
+    var defaultGrappleVelocity;
+    this.grappleActive = true;
+    this.grappleSprite.exists = true;
+    defaultGrappleVelocity = player.facing === Phaser.RIGHT ? k.DefaultGrappleVelocity : Phaser.Point.multiply(k.DefaultGrappleVelocity, new Phaser.Point(-1, 1));
+    this.grappleSprite.body.position = Phaser.Point.add(player.sprite.body.position, (Phaser.Point.normalize(defaultGrappleVelocity)).setMagnitude(10));
+    return this.grappleSprite.body.velocity = defaultGrappleVelocity;
+  };
+
+  return Grapple;
 
 })(PlayerState);
 
 module.exports = {
   PlayerState: PlayerState,
-  Modes: [Walking, Jumping, Falling, Grinding]
+  Modes: [Walk, Jump, Fall, Grind, Grapple]
 };
 
 module.exports = _.extend(module.exports, modeCodes);
 
 
 },{"Constants":2,"lodash":1}],6:[function(require,module,exports){
-var EdgeKey, Player, canGrind, create, input, k, preload, previousInput, setPlayerMode, startGrind, state, update;
+var EdgeKey, Player, PlayerState, create, input, k, preload, previousInput, state, update;
 
 k = require('Constants');
 
@@ -12771,37 +12987,11 @@ EdgeKey = require('EdgeKey');
 
 Player = require('Player');
 
+PlayerState = require('PlayerState');
+
 state = {};
 
 input = {};
-
-setPlayerMode = function(mode) {
-  console.log('mode: ', mode);
-  return state.info.dude.state = mode;
-};
-
-startGrind = function(obj, rail) {
-  var positionOnRail, railInfo;
-  if (!canGrind(obj, rail)) {
-    return;
-  }
-  console.log('grinding');
-  obj.body.bounce.y = -1;
-  setPlayerMode('grinding');
-  railInfo = state.info.rail;
-  positionOnRail = (obj.body.position.x - railInfo.path.x[0]) / railInfo.path.length;
-  state.info.dude.grindInfo = {
-    progressRate: railInfo.path.length / obj.body.velocity.x,
-    rail: rail,
-    railInfo: railInfo,
-    velocity: obj.body.velocity.x
-  };
-  return state.info.dude.grindInfo.progress = positionOnRail;
-};
-
-canGrind = function(obj, rail) {
-  return (state.info.dude.state !== 'grinding') && obj.body.velocity.x !== 0;
-};
 
 preload = function(game) {
   game.load.image('sky', 'assets/sky.png');
@@ -12811,26 +13001,40 @@ preload = function(game) {
 };
 
 create = function(game) {
-  var ground, groundLevel, platforms, player, rail, rails;
-  game.physics.startSystem(Phaser.Physics.NINJA);
-  game.physics.ninja.gravity = 1;
-  game.physics.ninja.setBoundsToWorld();
+  var grable, grappleGroup, ground, groundLevel, i, j, platforms, player, rail, rails;
+  game.world.setBounds(0, 0, 3200, 1600);
+  game.physics.startSystem(Phaser.Physics.ARCADE);
+  game.physics.arcade.gravity.y = k.WorldGravity;
+  game.physics.arcade.setBoundsToWorld();
   platforms = game.add.group();
+  platforms.enableBody = true;
   rails = game.add.group();
+  rails.enableBody = true;
+  grappleGroup = game.add.group();
+  grappleGroup.enableBody = true;
   groundLevel = game.world.height - 64;
   ground = platforms.create(0, groundLevel, 'ground');
   ground.scale.setTo(8, 2);
-  game.physics.ninja.enable(ground);
+  game.physics.arcade.enable(ground);
   ground.body.immovable = true;
-  ground.body.gravityScale = 0;
-  rail = rails.create(200, groundLevel - 64, 'ground');
-  rail.scale.setTo(1, 0.1);
-  game.physics.ninja.enable(rail);
-  rail.body.immovable = true;
-  rail.body.gravityScale = 0;
-  player = new Player(game, 32, game.world.height - 300, 'dude');
-  player.addWalkable(platforms);
-  player.addGrindable(rails);
+  ground.body.allowGravity = false;
+  grable = grappleGroup.create(0, groundLevel - 400, 'ground');
+  grable.scale.setTo(10, 0.5);
+  game.physics.arcade.enable(grable);
+  grable.body.immovable = true;
+  grable.body.allowGravity = false;
+  for (i = j = 1; j <= 8; i = ++j) {
+    rail = rails.create(400 * i, groundLevel - (64 * i), 'ground');
+    rail.scale.setTo(1, 0.1);
+    game.physics.arcade.enable(rail);
+    rail.body.immovable = true;
+    rail.body.allowGravity = false;
+  }
+  player = new Player(game, 32, groundLevel - 64, 'dude', PlayerState.FALL, {
+    walkableGroups: [platforms],
+    grindableGroups: [rails],
+    grappleableGroups: [grappleGroup]
+  });
   state = {
     players: [player],
     rails: rails,
@@ -12843,20 +13047,24 @@ create = function(game) {
       'right': Phaser.Keyboard.RIGHT,
       'boost': Phaser.Keyboard.SHIFT,
       'debug': Phaser.Keyboard.D,
-      'jump': Phaser.Keyboard.UP
+      'jump': Phaser.Keyboard.SPACEBAR,
+      'grapple': Phaser.Keyboard.Z,
+      'grind': Phaser.Keyboard.X
     })
   };
-  return input.keys.jump = EdgeKey.fromKey(input.keys.jump);
+  input.keys.jump = EdgeKey.fromKey(input.keys.jump);
+  input.keys.grapple = EdgeKey.fromKey(input.keys.grapple);
+  return game.camera.follow(player.sprite, Phaser.Camera.FOLLOW_PLATFORMER);
 };
 
 previousInput = null;
 
 update = function(game) {
-  var i, keys, len, platforms, player, players, rails;
+  var j, keys, len, platforms, player, players, rails;
   players = state.players, platforms = state.platforms, rails = state.rails;
   keys = input.keys;
-  for (i = 0, len = players.length; i < len; i++) {
-    player = players[i];
+  for (j = 0, len = players.length; j < len; j++) {
+    player = players[j];
     player.update(game, {
       keys: keys
     });
@@ -12873,7 +13081,7 @@ new Phaser.Game(800, 600, Phaser.AUTO, '', {
 });
 
 
-},{"Constants":2,"EdgeKey":3,"Player":4}]},{},[6])
+},{"Constants":2,"EdgeKey":3,"Player":4,"PlayerState":5}]},{},[6])
 
 
 //# sourceMappingURL=app.js.map

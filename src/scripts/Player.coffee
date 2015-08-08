@@ -1,44 +1,46 @@
 _ = require 'lodash'
 k = require 'Constants'
 PlayerState = require 'PlayerState'
+# Grapple = require 'Grapple'
 
 class Player
-  constructor: (@game, x, y, spriteKey, mode = 0) ->
+  constructor: (@game, x, y, spriteKey, mode = 0, options = {}) ->
+    _.defaults options,
+      walkableGroups: []
+      grindableGroups: []
+      grappleableGroups: []
+
     @sprite = @game.add.sprite x, y, spriteKey
     @sprite.animations.add 'left', [0, 1, 2, 3], 10, true
     @sprite.animations.add 'right', [5, 6, 7, 8], 10, true
 
-    @game.physics.ninja.enable @sprite
+    @game.physics.arcade.enable @sprite
     _.assign @sprite.body, k.PlayerBodyProperties
 
-    @_modes = (new State for State in PlayerState.Modes)
+    @_modes = (new State this, @game for State in PlayerState.Modes)
+
+    @_modes[PlayerState.GRAPPLE].addGrappleable options.grappleableGroups
+
     @setMode mode
 
-    @walkableGroups = []
-    @grindableGroups = []
+    {@grindableGroups, @walkableGroups} = options
 
   update: (game, input) ->
-    console.log @sprite.body.shape.velocity
+    if not (input.keys.left.isDown and input.keys.right.isDown)
+      if input.keys.left.isDown
+        @facing = Phaser.LEFT
+      else if input.keys.right.isDown
+        @facing = Phaser.RIGHT
     @mode.update this, game, input
 
-  checkWalk: (game, input) ->
+  continueWalk: (game, input) ->
     for walkOn in @walkableGroups
-      game.physics.ninja.collide \
+      game.physics.arcade.collide \
         @sprite,
-        walkOn,
-        () => @setMode PlayerState.WALKING
+        walkOn
 
-  checkGrind: (game, input) ->
-    for grindOn in @grindableGroups
-      game.physics.ninja.overlap \
-        @sprite,
-        grindOn,
-        (player, rail) => @setMode PlayerState.GRINDING, rail: rail
-      # game.physics.ninja.collide @sprite, grindOn
-
-  continueGrind: (game, input) ->
-    for grindOn in @grindableGroups
-      game.physics.ninja.collide @sprite, grindOn
+  continueGrind: (game, input, rail) ->
+    game.physics.arcade.collide @sprite, rail
 
   addWalkable: (group) -> @walkableGroups.push group
 
@@ -54,10 +56,13 @@ class Player
       if 0 <= stateCode < PlayerState.Modes.length
       then @_modes[stateCode]
       else console.log 'Invalid state code', stateCode; debugger
-    console.log newMode.name
     if newMode?
+      console.log 'transitioning from', @mode?.name, ' to', newMode.name
       @mode = newMode
       @modeCode = stateCode
+    else
+      console.log 'idk what happen'
+      debugger
     @mode.enter this, @game, data
 
 
