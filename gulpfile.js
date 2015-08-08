@@ -18,9 +18,11 @@ options['coffee'] = {
   options: {
     debug: true,
     basedir: __dirname + '/src/scripts',
-    paths: [__dirname + '/node_modules', __dirname + '/src/scripts'],
+    paths: [ __dirname + '/node_modules'
+           , __dirname + '/src/scripts'
+           , __dirname + '/lib' ],
     dest: './build',
-    extensions: ['.coffee']
+    extensions: [ '.coffee' ]
   }
 };
 
