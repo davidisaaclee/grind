@@ -1,10 +1,22 @@
-k =
-  BoostFactor: 3
-  MoveFactor: 20
+k = require 'Constants'
+EdgeKey = require 'EdgeKey'
+Player = require 'Player'
+
 state = {}
+input = {}
+
+setPlayerMode = (mode) ->
+  console.log 'mode: ', mode
+  state.info.dude.state = mode
 
 startGrind = (obj, rail) ->
-  state.info.dude.state = 'grinding'
+  if not canGrind obj, rail
+    return
+
+  console.log 'grinding'
+  obj.body.bounce.y = -1
+
+  setPlayerMode 'grinding'
   railInfo = state.info.rail
 
   # HACK: one-dimensional
@@ -16,139 +28,157 @@ startGrind = (obj, rail) ->
     velocity: obj.body.velocity.x
   state.info.dude.grindInfo.progress = positionOnRail
 
-    # if state.info.dude.grindInfo.progressRate > 0
-    # then 0
-    # else 1
-
-  console.log 'pr', state.info.dude.grindInfo.progressRate
-  console.log "length: #{railInfo.path.length} vel: #{obj.body.velocity.x}"
-
 canGrind = (obj, rail) ->
   (state.info.dude.state isnt 'grinding') and
-    state.info.dude.canGrind and
+    # state.info.dude.canGrind and
     obj.body.velocity.x != 0
 
 preload = (game) ->
-  game.load.image('sky', 'assets/sky.png')
-  game.load.image('ground', 'assets/platform.png')
-  game.load.image('star', 'assets/star.png')
-  game.load.spritesheet('dude', 'assets/dude.png', 32, 48)
+  game.load.image 'sky', 'assets/sky.png'
+  game.load.image 'ground', 'assets/platform.png'
+  game.load.image 'star', 'assets/star.png'
+  game.load.spritesheet 'dude', 'assets/dude.png', 32, 48
 
 create = (game) ->
-  game.world.setBounds(0, 0, 1600, 1600)
-  game.physics.startSystem Phaser.Physics.ARCADE
-  game.time.advancedTiming = true
+  # game.world.setBounds 0, 0, 1600, 1600
+  game.physics.startSystem Phaser.Physics.NINJA
+  game.physics.ninja.gravity = 1
+  do game.physics.ninja.setBoundsToWorld
 
-  platforms = game.add.group()
-  platforms.enableBody = true
-
+  platforms = do game.add.group
   rails = do game.add.group
-  rails.enableBody = true
 
   groundLevel = game.world.height - 64
 
-  ground = platforms.create(0, groundLevel, 'ground')
+  ground = platforms.create 0, groundLevel, 'ground'
+  ground.scale.setTo 8, 2
+  game.physics.ninja.enable ground
   ground.body.immovable = true
-  ground.scale.setTo(8, 2)
+  ground.body.gravityScale = 0
 
-  rail = rails.create 200, groundLevel - 128, 'ground'
+  rail = rails.create 200, groundLevel - 64, 'ground'
+  rail.scale.setTo 1, 0.1
+  game.physics.ninja.enable rail
   rail.body.immovable = true
-  rail.scale.setTo(1, 0.5)
+  rail.body.gravityScale = 0
 
-  player = game.add.sprite 32, game.world.height - 150, 'dude'
-  player.info = {}
-  game.physics.arcade.enable player
-  player.body.bounce.y = 0.2
-  player.body.gravity.y = 1000
-  player.body.collideWorldBounds = true
-
-  player.animations.add 'left', [0, 1, 2, 3], 10, true
-  player.animations.add 'right', [5, 6, 7, 8], 10, true
+  player = new Player game, 32, game.world.height - 300, 'dude'
+  player.addWalkable platforms
+  player.addGrindable rails
 
   state =
-    player: player
-    info:
-      dude:
-        state: 'walking'
-        canGrind: true
-      rail:
-        path:
-          x: [ rail.left, rail.right ]
-          y: [ rail.top ]
-          length: rail.right - rail.left
-    platforms: platforms
+    players: [player]
     rails: rails
+    platforms: platforms
+  input =
+    keys: game.input.keyboard.addKeys
+      'down': Phaser.Keyboard.DOWN
+      'left': Phaser.Keyboard.LEFT
+      'right': Phaser.Keyboard.RIGHT
+      'boost': Phaser.Keyboard.SHIFT
+      'debug': Phaser.Keyboard.D
+      'jump': Phaser.Keyboard.UP
 
-  player.anchor.setTo 0.5, 0.5
-  game.camera.follow player, Phaser.Camera.FOLLOW_PLATFORMER
+  input.keys.jump = EdgeKey.fromKey input.keys.jump
+
+  # player.info = {}
+  # game.physics.ninja.enable player
+  # player.body.bounce.y = 0.2
+  # player.body.gravityScale = 1
+  # player.body.collideWorldBounds = true
+
+  # player.animations.add 'left', [0, 1, 2, 3], 10, true
+  # player.animations.add 'right', [5, 6, 7, 8], 10, true
+
+  # state =
+  #   player: player
+  #   info:
+  #     dude:
+  #       state: 'walking'
+  #       canGrind: true
+  #     rail:
+  #       path:
+  #         x: [ rail.left, rail.right ]
+  #         y: [ rail.top ]
+  #         length: rail.right - rail.left
+  #   platforms: platforms
+  #   rails: rails
+
+  # game.camera.follow player.sprite, Phaser.Camera.FOLLOW_PLATFORMER
+
+previousInput = null
 
 update = (game) ->
-  {player, platforms, rails} = state
-  key = game.input.keyboard.addKeys
-    'jump': Phaser.Keyboard.UP
-    'down': Phaser.Keyboard.DOWN
-    'left': Phaser.Keyboard.LEFT
-    'right': Phaser.Keyboard.RIGHT
-    'boost': Phaser.Keyboard.SHIFT
-    'debug': Phaser.Keyboard.D
-  startGrindCooldown = () ->
-    state.info.dude.canGrind = false
-    grindCooldown = game.time.create true
-    grindCooldown.add 100, () ->
-      state.info.dude.canGrind = true
-      grindCooldown.stop true
-    do grindCooldown.start
+  {players, platforms, rails} = state
+  {keys} = input
 
-  if key.debug.isDown
+  (player.update game, keys: keys) for player in players
+
+  if keys.debug.isDown
     debugger
 
-  game.physics.arcade.collide player, platforms
+  # startGrindCooldown = () ->
+  #   # state.info.dude.canGrind = false
+  #   grindCooldown = game.time.create true
+  #   grindCooldown.add 100, () ->
+  #     # state.info.dude.canGrind = true
+  #     grindCooldown.stop true
+  #   do grindCooldown.start
 
-  if player.body.touching.down and state.info.dude.state is 'jumping'
-    state.info.dude.state = 'walking'
+  # doesTheDudeGrind = () -> state.info.dude.state is 'grinding'
+  # game.physics.ninja.collide player, platforms, () -> setPlayerMode 'walking'
+  # game.physics.ninja.overlap player, rails, startGrind, null, this
+  # game.physics.ninja.collide player, rails, startGrind, doesTheDudeGrind, this
 
-  switch state.info.dude.state
-    when 'walking', 'jumping'
-      switch
-        when key.left.isDown
-          player.body.velocity.x += -k.MoveFactor
-          player.info.facingLeft = true
-          player.animations.play 'left'
-        when key.right.isDown
-          player.body.velocity.x += k.MoveFactor
-          player.info.facingLeft = false
-          player.animations.play 'right'
-        else
-          do player.animations.stop
-          player.frame = 4
-    when 'grinding'
-      grindInfo = state.info.dude.grindInfo
+  # if player.body.touching.down and state.info.dude.state is 'jumping'
+  #   setPlayerMode 'walking'
 
-      player.body.velocity.x = grindInfo.velocity
-      player.body.velocity.y = 0
-      grindInfo.progress += grindInfo.progressRate
+  # switch state.info.dude.state
+  #   when 'walking', 'jumping'
+  #     switch
+  #       when key.left.isDown
+  #         player.body.velocity.x += -k.MoveFactor
+  #         player.info.facingLeft = true
+  #         player.animations.play 'left'
+  #       when key.right.isDown
+  #         player.body.velocity.x += k.MoveFactor
+  #         player.info.facingLeft = false
+  #         player.animations.play 'right'
+  #       else
+  #         do player.animations.stop
+  #         player.frame = 4
+  #   when 'grinding'
+  #     grindInfo = state.info.dude.grindInfo
 
-      if (grindInfo.progress > 1) or (grindInfo.progress < 0)
-        console.log grindInfo.progress
-        console.log 'end of rail'
-        state.info.dude.state = 'walking'
-        do startGrindCooldown
-      else
-        position =
-          x: game.math.linearInterpolation grindInfo.railInfo.path.x, grindInfo.progress
-          y: game.math.linearInterpolation grindInfo.railInfo.path.y, grindInfo.progress
-        player.body.position = position
+  #     player.body.velocity.x = grindInfo.velocity
+  #     player.body.velocity.y = 0
 
-  key.jump.onDown.add () ->
-    if (state.info.dude.state is 'walking' || state.info.dude.state is 'grinding')
-      state.info.dude.state = 'jumping'
-      player.body.velocity.y = -600
-      do startGrindCooldown
+  #     if not player.body.touching.down
+  #       setPlayerMode 'jumping'
 
-  if key.boost.isDown
-    player.body.velocity.x *= k.BoostFactor
 
-  game.physics.arcade.overlap player, rails, startGrind, canGrind, this
+      # grindInfo.progress += grindInfo.progressRate
+
+      # if (grindInfo.progress > 1) or (grindInfo.progress < 0)
+      #   console.log grindInfo.progress
+      #   console.log 'end of rail'
+      #   setPlayerMode 'walking'
+      #   do startGrindCooldown
+      # else
+      #   position =
+      #     x: game.math.linearInterpolation grindInfo.railInfo.path.x, grindInfo.progress
+      #     y: game.math.linearInterpolation grindInfo.railInfo.path.y, grindInfo.progress
+      #   player.body.position = position
+
+  # key.jump.onDown.add () ->
+  #   if (state.info.dude.state is 'walking' || state.info.dude.state is 'grinding')
+  #     setPlayerMode 'jumping'
+  #     player.body.velocity.y = -600
+  #     # do startGrindCooldown
+
+  # if keys.boost.isDown
+  #   player.body.velocity.x *= k.BoostFactor
+
 
 new Phaser.Game \
   800,
