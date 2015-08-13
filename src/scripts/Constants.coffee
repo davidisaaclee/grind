@@ -1,12 +1,17 @@
 module.exports =
+  System:
+    AssetsDirectory: '../assets/'
+
+  MapTileSideLength: 32
+
   WorldGravity: 2000
 
   # walking
-  MaximumWalkSpeed: 500
-  MoveFactor: 20
+  MaximumWalkSpeed: 200
+  MoveFactor: 10
 
   # air
-  AirMoveFactor: 5
+  AirMoveFactor: 4
   GravityConstant: 2000
 
   # jumping
@@ -14,26 +19,28 @@ module.exports =
   InitialJumpFactor: 20
   HighJumpFactor: 20
   InitialJumpCooldownTime: 50
-  HighJumpCooldownTime: 100
+  HighJumpCooldownTime: 200
+  DoubleJumpCooldownTime: 100
 
   # grinding
   GrindCooldownTime: 100
+  BalanceSwayAmount: 100
+  BalanceNudgePower: 0.05
+  RailOffsetBalanceRatio: 0.05
 
   PlayerBodyProperties:
     bounce:
       x: 0
       y: 0
     collideWorldBounds: true
-    # drag: 1
     friction:
       x: 0.2
       y: 0.2
-    # gravityScale: 1
-    # maxSpeed: 999
-    gravity:
-      x: 0
-      y: 0
-    allowGravity: false
+    # gravity:
+    #   x: 0
+    #   y: 0
+    # allowGravity: false
+    allowGravity: true
 
   MinGrappleSpeed: 500
   GrappleBodyProperties:

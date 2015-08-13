@@ -1,0 +1,45 @@
+{ "height":100,
+ "layers":[
+        {
+         "compression":"zlib",
+         "data":"eJzt0TENAAAMw7BK4895CHb022FLQZAEAHpTxi8eAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwG0BYjIANA==",
+         "encoding":"base64",
+         "height":100,
+         "name":"Tile Layer 1",
+         "opacity":1,
+         "type":"tilelayer",
+         "visible":true,
+         "width":100,
+         "x":0,
+         "y":0
+        }],
+ "nextobjectid":1,
+ "orientation":"orthogonal",
+ "properties":
+    {
+
+    },
+ "renderorder":"right-down",
+ "tileheight":32,
+ "tilesets":[
+        {
+         "firstgid":1,
+         "image":"..\/sprites\/maps\/map_tiles.png",
+         "imageheight":96,
+         "imagewidth":16,
+         "margin":0,
+         "name":"tileset",
+         "properties":
+            {
+
+            },
+         "spacing":0,
+         "tilecount":6,
+         "tileheight":16,
+         "tilewidth":16,
+         "transparentcolor":"#000000"
+        }],
+ "tilewidth":32,
+ "version":1,
+ "width":100
+}

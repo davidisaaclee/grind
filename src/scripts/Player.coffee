@@ -23,7 +23,7 @@ class Player
 
     @setMode mode
 
-    {@grindableGroups, @walkableGroups} = options
+    {@grindableGroups, @walkableGroups, @grappleableGroups} = options
 
   update: (game, input) ->
     if not (input.keys.left.isDown and input.keys.right.isDown)
@@ -34,13 +34,26 @@ class Player
     @mode.update this, game, input
 
   continueWalk: (game, input) ->
+    collided = false
     for walkOn in @walkableGroups
       game.physics.arcade.collide \
         @sprite,
-        walkOn
+        walkOn,
+        () -> collided = true
+    return collided
 
   continueGrind: (game, input, rail) ->
-    game.physics.arcade.collide @sprite, rail
+    # @sprite.body.position.y -= 1
+    # grinding = false
+    # game.physics.arcade.collide @sprite, rail, () -> grinding = true
+    # return grinding
+    grinding = false
+    for grindOn in @grindableGroups
+      game.physics.arcade.collide \
+        @sprite,
+        grindOn,
+        () -> grinding = true
+    return grinding
 
   addWalkable: (group) -> @walkableGroups.push group
 
@@ -57,7 +70,7 @@ class Player
       then @_modes[stateCode]
       else console.log 'Invalid state code', stateCode; debugger
     if newMode?
-      console.log 'transitioning from', @mode?.name, ' to', newMode.name
+      console.log @mode?.name, '->\t', newMode.name
       @mode = newMode
       @modeCode = stateCode
     else

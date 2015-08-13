@@ -1,3 +1,5 @@
+_ = require 'lodash'
+
 k = require 'Constants'
 EdgeKey = require 'EdgeKey'
 Player = require 'Player'
@@ -12,8 +14,30 @@ preload = (game) ->
   game.load.image 'star', 'assets/star.png'
   game.load.spritesheet 'dude', 'assets/dude.png', 32, 48
 
+
+  mapLocation = k.System.AssetsDirectory + 'maps/longgrind.json'
+  # mapLocation = k.System.AssetsDirectory + 'maps/grindground.json'
+  # tilesLocation = k.System.AssetsDirectory + 'sprites/maps/map_tiles.png'
+  tilesLocation = k.System.AssetsDirectory + 'sprites/maps/set2/tileset2.png'
+  railTilesLocation = k.System.AssetsDirectory + 'sprites/maps/set2/rails.png'
+  game.load.tilemap 'my-map', mapLocation, null, Phaser.Tilemap.TILED_JSON
+  game.load.image 'my-tileset', tilesLocation
+  game.load.image 'rail-tileset', railTilesLocation
+
 create = (game) ->
-  game.world.setBounds 0, 0, 3200, 1600
+  map = game.add.tilemap 'my-map'
+  map.addTilesetImage 'tileset2', 'my-tileset'
+  map.addTilesetImage 'rails_tileset', 'rail-tileset'
+
+  blockLayer = map.createLayer 'ground'
+  map.setCollision 10, true, blockLayer
+  blockLayer.resizeWorld()
+
+  railLayer = map.createLayer 'rails'
+
+  grappleLayer = map.createLayer 'grapples'
+  map.setCollisionByExclusion [], true, grappleLayer
+
   game.physics.startSystem Phaser.Physics.ARCADE
   game.physics.arcade.gravity.y = k.WorldGravity
   do game.physics.arcade.setBoundsToWorld
@@ -27,41 +51,48 @@ create = (game) ->
 
   groundLevel = game.world.height - 64
 
-  ground = platforms.create 0, groundLevel, 'ground'
-  ground.scale.setTo 8, 2
-  game.physics.arcade.enable ground
-  ground.body.immovable = true
-  ground.body.allowGravity = false
+  railLines = []
+  for rail in map.objects['rail_lines']
+    railPolyline = []
+    for i in [0...(rail.polyline.length - 1)]
+      if rail.polyline?
+        [fromX, fromY] = rail.polyline[i]
+        [toX, toY] = rail.polyline[i + 1]
 
-  grable = grappleGroup.create 0, groundLevel - 400, 'ground'
-  grable.scale.setTo 10, 0.5
-  game.physics.arcade.enable grable
-  grable.body.immovable = true
-  grable.body.allowGravity = false
+        line = new Phaser.Line \
+          fromX + rail.x,
+          fromY + rail.y,
+          toX + rail.x,
+          toY + rail.y
 
-  for i in [1..8]
-    rail = rails.create 400 * i, groundLevel - (64 * i), 'ground'
-    rail.scale.setTo 1, 0.1
-    game.physics.arcade.enable rail
-    rail.body.immovable = true
-    rail.body.allowGravity = false
+        tiles = railLayer.getRayCastTiles line
+        for tile in tiles
+          tile.setCollision false, false, true, true
+          tile.railLineSegment = line
+          tile.railPolyline = railPolyline
+
+        railPolyline.push line
+        railLines.push line
+
 
   player = new Player \
     game,
     32,
-    groundLevel - 64,
+    0,
     'dude',
     PlayerState.FALL,
-    walkableGroups: [platforms]
-    grindableGroups: [rails]
-    grappleableGroups: [grappleGroup]
+    walkableGroups: [blockLayer]
+    grindableGroups: [railLayer]
+    grappleableGroups: [grappleLayer]
 
-  state =
+  _.assign state,
     players: [player]
     rails: rails
     platforms: platforms
+    railLines: railLines
   input =
     keys: game.input.keyboard.addKeys
+      'up': Phaser.Keyboard.UP
       'down': Phaser.Keyboard.DOWN
       'left': Phaser.Keyboard.LEFT
       'right': Phaser.Keyboard.RIGHT
@@ -71,8 +102,6 @@ create = (game) ->
       'grapple': Phaser.Keyboard.Z
       'grind': Phaser.Keyboard.X
 
-  # ['jump', 'grapple'].forEach (key) ->
-  #   input.keys[key] = EdgeKey.fromKey input.keys[key]
   input.keys.jump = EdgeKey.fromKey input.keys.jump
   input.keys.grapple = EdgeKey.fromKey input.keys.grapple
 
@@ -84,7 +113,8 @@ update = (game) ->
   {players, platforms, rails} = state
   {keys} = input
 
-  (player.update game, keys: keys) for player in players
+  for player in players
+    player.update game, keys: keys
 
   if keys.debug.isDown
     debugger
@@ -95,6 +125,4 @@ new Phaser.Game \
   600,
   Phaser.AUTO,
   '',
-  preload: preload,
-  create: create,
-  update: update
+  {preload: preload, create: create, update: update}
