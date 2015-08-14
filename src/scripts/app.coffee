@@ -4,6 +4,7 @@ k = require 'Constants'
 EdgeKey = require 'EdgeKey'
 Player = require 'Player'
 PlayerState = require 'PlayerState'
+Polyline = require 'util/Polyline'
 
 state = {}
 input = {}
@@ -30,6 +31,7 @@ create = (game) ->
   map.addTilesetImage 'rails_tileset', 'rail-tileset'
 
   blockLayer = map.createLayer 'ground'
+  game.physics.arcade.enable blockLayer
   map.setCollision 10, true, blockLayer
   blockLayer.resizeWorld()
 
@@ -49,11 +51,10 @@ create = (game) ->
   grappleGroup = do game.add.group
   grappleGroup.enableBody = true
 
-  groundLevel = game.world.height - 64
-
   railLines = []
   for rail in map.objects['rail_lines']
-    railPolyline = []
+    railSegments = []
+    tiles = []
     for i in [0...(rail.polyline.length - 1)]
       if rail.polyline?
         [fromX, fromY] = rail.polyline[i]
@@ -65,20 +66,22 @@ create = (game) ->
           toX + rail.x,
           toY + rail.y
 
-        tiles = railLayer.getRayCastTiles line
-        for tile in tiles
-          tile.setCollision false, false, true, true
+        castTiles = railLayer.getRayCastTiles line
+        for tile in castTiles
           tile.railLineSegment = line
-          tile.railPolyline = railPolyline
+          tile.setCollision false, false, true, true
 
-        railPolyline.push line
+        tiles.push castTiles...
+        railSegments.push line
         railLines.push line
+    tiles.forEach (tile) ->
+      tile.railPolyline = new Polyline railSegments
 
 
   player = new Player \
     game,
     32,
-    0,
+    1000,
     'dude',
     PlayerState.FALL,
     walkableGroups: [blockLayer]
@@ -101,11 +104,14 @@ create = (game) ->
       'jump': Phaser.Keyboard.SPACEBAR
       'grapple': Phaser.Keyboard.Z
       'grind': Phaser.Keyboard.X
+      'fly': Phaser.Keyboard.F
 
   input.keys.jump = EdgeKey.fromKey input.keys.jump
   input.keys.grapple = EdgeKey.fromKey input.keys.grapple
+  input.keys.fly = EdgeKey.fromKey input.keys.fly
 
   game.camera.follow player.sprite, Phaser.Camera.FOLLOW_PLATFORMER
+
 
 previousInput = null
 
@@ -121,8 +127,8 @@ update = (game) ->
 
 
 new Phaser.Game \
-  800,
-  600,
+  1600,
+  1200,
   Phaser.AUTO,
   '',
   {preload: preload, create: create, update: update}

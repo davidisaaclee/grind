@@ -12372,9 +12372,9 @@ module.exports = {
   HighJumpCooldownTime: 200,
   DoubleJumpCooldownTime: 100,
   GrindCooldownTime: 100,
-  BalanceSwayAmount: 100,
-  BalanceNudgePower: 0.05,
-  RailOffsetBalanceRatio: 0.05,
+  BalanceAcceleration: 2,
+  MaxGrindSpeed: 300,
+  BendAcceleration: 10,
   PlayerBodyProperties: {
     bounce: {
       x: 0,
@@ -12570,7 +12570,7 @@ module.exports = Player;
 
 
 },{"Constants":2,"PlayerState":5,"lodash":1}],5:[function(require,module,exports){
-var Fall, Grapple, Grind, Jump, PlayerState, Walk, _, airMovement, applyGravity, k, modeCodes,
+var Fall, Fly, Grapple, Grind, Jump, PlayerState, Walk, _, airMovement, applyGravity, k, modeCodes,
   extend = function(child, parent) { for (var key in parent) { if (hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; },
   hasProp = {}.hasOwnProperty;
 
@@ -12583,7 +12583,8 @@ modeCodes = {
   JUMP: 1,
   FALL: 2,
   GRIND: 3,
-  GRAPPLE: 4
+  GRAPPLE: 4,
+  FLY: 5
 };
 
 PlayerState = (function() {
@@ -12605,8 +12606,8 @@ PlayerState = (function() {
   };
 
   PlayerState.prototype.checkAccepts = function(player, game, input, stateStack) {
-    var i, len1, out_data, state;
-    for (i = 0, len1 = stateStack.length; i < len1; i++) {
+    var i, len, out_data, state;
+    for (i = 0, len = stateStack.length; i < len; i++) {
       state = stateStack[i];
       out_data = {};
       if (state.accept(player, game, input, out_data)) {
@@ -12651,10 +12652,10 @@ Walk = (function(superClass) {
   Walk.prototype.name = 'WALK';
 
   Walk.prototype.accept = function(player, game, input) {
-    var i, len1, ref, walkOn, walked;
+    var i, len, ref, walkOn, walked;
     walked = false;
     ref = player.walkableGroups;
-    for (i = 0, len1 = ref.length; i < len1; i++) {
+    for (i = 0, len = ref.length; i < len; i++) {
       walkOn = ref[i];
       game.physics.arcade.collide(player.sprite, walkOn, function() {
         return walked = true;
@@ -12689,7 +12690,7 @@ Walk = (function(superClass) {
         player.sprite.animations.stop();
         player.sprite.frame = 4;
     }
-    return this.checkAccepts(player, game, input, [player._modes[modeCodes.GRAPPLE], player._modes[modeCodes.JUMP], player._modes[modeCodes.FALL], player._modes[modeCodes.GRIND]]);
+    return this.checkAccepts(player, game, input, [player._modes[modeCodes.GRAPPLE], player._modes[modeCodes.JUMP], player._modes[modeCodes.FALL], player._modes[modeCodes.GRIND], player._modes[modeCodes.FLY]]);
   };
 
   return Walk;
@@ -12801,6 +12802,24 @@ Fall = (function(superClass) {
 Grind = (function(superClass) {
   extend(Grind, superClass);
 
+
+  /* State fields
+  
+  canAccept
+  cooldownTimer
+  
+  popped
+  
+  activeSegment
+  previousSegment
+  rail
+  
+  _localVelocity:
+    forward
+    balance
+    isHeadedAlongRail
+   */
+
   Grind.prototype.name = 'GRIND';
 
   function Grind(player, game) {
@@ -12826,14 +12845,14 @@ Grind = (function(superClass) {
   }
 
   Grind.prototype.accept = function(player, game, input, out_data) {
-    var grindOn, ground, i, len1, onRail, ref;
+    var grindOn, ground, i, len, onRail, ref;
     if (!(this.canAccept && input.keys.grind.isDown)) {
       return false;
     }
     ground = false;
     onRail = null;
     ref = player.grindableGroups;
-    for (i = 0, len1 = ref.length; i < len1; i++) {
+    for (i = 0, len = ref.length; i < len; i++) {
       grindOn = ref[i];
       game.physics.arcade.collide(player.sprite, grindOn, ((function(_this) {
         return function(player, railBlock) {
@@ -12850,70 +12869,135 @@ Grind = (function(superClass) {
   };
 
   Grind.prototype.enter = function(player, game, data) {
-    var heading, i, len, len1, pos, pt, ref, ref1, s, segment;
-    this._balance = 0;
-    this.rail = data.rail.polyline;
+    var heading, pos, pt, ref, segment;
+    this._setActiveRail(data.rail.polyline);
     this.activeSegment = data.rail.activeSegment;
+    game.debug.geom(this.activeSegment, 'rgba(255, 255, 0, 1)');
+    this.previousSegment = this.activeSegment;
+    this._localVelocity = {
+      forward: Math.min(player.sprite.body.speed, k.MaxGrindSpeed),
+      balance: 0,
+      isHeadedAlongRail: (player.sprite.body.velocity.dot(this._lineToVector(this.activeSegment))) > 0
+    };
     pos = _.pick(player.sprite.body, 'x', 'y');
-    ref = this._closestPointOnLine(pos, this.rail), pt = ref.pt, segment = ref.segment;
-    len = 0;
-    ref1 = this.rail;
-    for (i = 0, len1 = ref1.length; i < len1; i++) {
-      s = ref1[i];
-      if (s === segment) {
-        len += Phaser.Point.distance(s.start, pt);
-        break;
-      } else {
-        len += s.length;
-      }
-    }
-    this.progress = len / this._polylineLength(this.rail);
-    heading = new Phaser.Point(Math.cos(this.activeSegment.angle, Math.sin(this.activeSegment.angle)));
-    this.ratioVelocity = this._distanceToLengthRatio(player.sprite.body.speed, this.rail);
-    if ((heading.dot(player.sprite.body.velocity.normalize())) < 0) {
-      this.ratioVelocity *= -1;
-    }
+    ref = this._closestPointOnLine(pos, this.rail.segments), pt = ref.pt, segment = ref.segment;
+    heading = this._lineToVector(this.activeSegment, {
+      negate: true
+    });
     this.popped = _.pick(player.sprite.body, 'friction');
     return _.assign(player.sprite.body, {
-      friction: 0,
-      velocity: {
-        x: 0,
-        y: 0
-      }
+      friction: 0
     });
   };
 
   Grind.prototype.exit = function(player, game) {
-    var heading;
     _.assign(player.sprite.body, this.popped);
-    heading = new Phaser.Point(Math.cos(this.activeSegment.angle, Math.sin(this.activeSegment.angle)));
-    player.sprite.body.velocity = heading.setMagnitude(this._lengthRatioToDistance(this.ratioVelocity, this.rail));
     return this.cooldownTimer.start();
   };
 
   Grind.prototype.update = function(player, game, input) {
-    var point, ref, result, segment, switchMode;
-    this.progress += this.ratioVelocity * game.time.physicsElapsed;
-    result = this._lineRatioToPoint(this.progress, this.rail);
-    if (result == null) {
-      return player.setMode(modeCodes.FALL);
-    } else {
-      if (input.keys.up.isDown) {
-        this._nudgeBalance(true, game.time.physicsElapsed);
-      } else if (input.keys.down.isDown) {
-        this._nudgeBalance(false, game.time.physicsElapsed);
-      }
-      segment = result.segment, point = result.point;
-      this.activeSegment = segment;
-      player.sprite.body.x = point.x;
-      player.sprite.body.y = point.y - player.sprite.body.halfHeight + (this._balance * k.BalanceSwayAmount);
-      this._updateBalance(player, game);
-      if (!((-6 < (ref = this._balance) && ref < 6))) {
-        return player.setMode(modeCodes.FALL);
-      } else {
-        return switchMode = this.checkAccepts(player, game, input, [player._modes[modeCodes.GRAPPLE], player._modes[modeCodes.JUMP]]);
-      }
+    var alignedVelocity, angle, bendFactor, heading, i, len, negativeDown, positiveDown, previousHeading, pt, quadrant, ref, remainingSegments, s, segment, switchMode, theta;
+    remainingSegments = (function(_this) {
+      return function() {
+        var t, x;
+        t = [];
+        x = _this.activeSegment;
+        while (x != null) {
+          t.push(x);
+          x = _this._localVelocity.isHeadedAlongRail ? _this.rail.next(x) : _this.rail.previous(x);
+        }
+        return t;
+      };
+    })(this)();
+    for (i = 0, len = remainingSegments.length; i < len; i++) {
+      s = remainingSegments[i];
+      game.debug.geom(s, 'rgba(0, 255, 0, 0.5)');
     }
+    ref = this._closestPointOnLine(player.sprite.body, remainingSegments), pt = ref.pt, segment = ref.segment;
+    game.debug.geom(new Phaser.Circle(pt.x, pt.y, 20), 'rgba(255, 255, 0, 1)');
+    if ((Phaser.Point.distance(pt, player.sprite.body)) > 100) {
+      player.setMode(modeCodes.FALL);
+      return;
+    }
+    heading = this._lineToVector(this.activeSegment, {
+      normalize: true,
+      negate: !this._localVelocity.isHeadedAlongRail
+    });
+    if (this.activeSegment !== this.previousSegment) {
+      previousHeading = this._lineToVector(this.previousSegment, {
+        normalize: true,
+        negate: !this._localVelocity.isHeadedAlongRail
+      });
+      theta = this._angleBetween(heading, previousHeading);
+      bendFactor = (-(Math.cos(theta)) + 1) / 2;
+      this._localVelocity.forward += k.BendAcceleration * bendFactor * this._localVelocity.balance * ((Math.sin(theta)) < 0 ? 1 : -1);
+      this.previousSegment = this.activeSegment;
+    }
+
+    /*
+    0 : [0, pi/2)
+    1 : [pi/2, pi)
+    2 : [pi, 3pi/2)
+    3 : [3pi/2, 2pi)
+     */
+    angle = (this.activeSegment.angle + 2 * Math.PI) % (2 * Math.PI);
+    quadrant = (function() {
+      switch (false) {
+        case !((0 <= angle && angle < (Math.PI / 2))):
+          return 0;
+        case !(((Math.PI / 2) <= angle && angle < Math.PI)):
+          return 1;
+        case !((Math.PI <= angle && angle < (3 * Math.PI / 2))):
+          return 2;
+        case !(((3 * Math.PI / 2) <= angle && angle < (2 * Math.PI))):
+          return 3;
+      }
+    })();
+    negativeDown = (function(_this) {
+      return function() {
+        if (_this._localVelocity.isHeadedAlongRail && ((quadrant === 0) || (quadrant === 3))) {
+          return input.keys.up.isDown;
+        }
+        if (!_this._localVelocity.isHeadedAlongRail && ((quadrant === 0) || (quadrant === 3))) {
+          return input.keys.down.isDown;
+        }
+        if (_this._localVelocity.isHeadedAlongRail && !((quadrant === 0) || (quadrant === 3))) {
+          return input.keys.down.isDown;
+        }
+        if (!_this._localVelocity.isHeadedAlongRail && !((quadrant === 0) || (quadrant === 3))) {
+          return input.keys.up.isDown;
+        }
+      };
+    })(this)();
+    positiveDown = (function(_this) {
+      return function() {
+        if (_this._localVelocity.isHeadedAlongRail && ((quadrant === 0) || (quadrant === 3))) {
+          return input.keys.down.isDown;
+        }
+        if (!_this._localVelocity.isHeadedAlongRail && ((quadrant === 0) || (quadrant === 3))) {
+          return input.keys.up.isDown;
+        }
+        if (_this._localVelocity.isHeadedAlongRail && !((quadrant === 0) || (quadrant === 3))) {
+          return input.keys.up.isDown;
+        }
+        if (!_this._localVelocity.isHeadedAlongRail && !((quadrant === 0) || (quadrant === 3))) {
+          return input.keys.down.isDown;
+        }
+      };
+    })(this)();
+    if (negativeDown) {
+      this._localVelocity.balance -= k.BalanceAcceleration;
+    }
+    if (positiveDown) {
+      this._localVelocity.balance += k.BalanceAcceleration;
+    }
+    alignedVelocity = this._alignLocalVelocity(this._localVelocity, heading);
+    player.sprite.body.velocity.set(alignedVelocity.x, alignedVelocity.y);
+    return switchMode = this.checkAccepts(player, game, input, [player._modes[modeCodes.GRAPPLE], player._modes[modeCodes.JUMP]]);
+  };
+
+  Grind.prototype._setActiveRail = function(railPolyline) {
+    return this.rail = railPolyline;
   };
 
   Grind.prototype._polylineLength = function(polyline) {
@@ -12929,13 +13013,13 @@ Grind = (function(superClass) {
   };
 
   Grind.prototype._lineRatioToPoint = function(amount, polyline) {
-    var advanced, heading, i, len1, px, r, segment;
+    var advanced, heading, i, len, px, r, segment;
     px = (this._polylineLength(polyline)) * amount;
     if (px < 0) {
       return null;
     }
     r = null;
-    for (i = 0, len1 = polyline.length; i < len1; i++) {
+    for (i = 0, len = polyline.length; i < len; i++) {
       segment = polyline[i];
       advanced = segment.length - px;
       if (advanced > 0) {
@@ -12962,20 +13046,54 @@ Grind = (function(superClass) {
     }
    */
 
-  Grind.prototype._closestPointOnLine = function(arg, segments) {
-    var heading, i, len1, pt, pts, segment, x, y;
+  Grind.prototype._closestPointOnLine = function(arg, segments, game) {
+    var closestPt, color, colorCode, distanceToFrom, heading, i, len, pointOnLine, pointOnSegment, pt, pts, segment, x, y;
     x = arg.x, y = arg.y;
+    distanceToFrom = function(pt) {
+      return Phaser.Point.distance(pt, {
+        x: x,
+        y: y
+      });
+    };
     pts = [];
-    for (i = 0, len1 = segments.length; i < len1; i++) {
+    for (i = 0, len = segments.length; i < len; i++) {
       segment = segments[i];
-      heading = new Phaser.Line(x, y, x + segment.normalX, y + segment.normalY);
-      pt = Phaser.Line.intersects(segment, heading, false);
-      if (pt != null) {
-        pts.push({
-          pt: pt,
-          segment: segment
-        });
+      heading = new Phaser.Line(x, y, x + segment.normalX * 1000, y + segment.normalY * 1000);
+      color = _([segment.start.x, segment.end.x, segment.length]).map(function(n) {
+        return n % 256;
+      }).map(Math.floor).value();
+      colorCode = "rgba(" + color[0] + ", " + color[1] + ", " + color[2] + ", 1)";
+      if (game != null) {
+        game.debug.geom(heading, colorCode);
       }
+      pt = Phaser.Line.intersects(segment, heading, false);
+      pointOnLine = function(line, x, y, allowance) {
+        var delta;
+        if (allowance == null) {
+          allowance = 0;
+        }
+        delta = (x - line.start.x) * (line.end.y - line.start.y) - (line.end.x - line.start.x) * (y - line.start.y);
+        return delta < allowance;
+      };
+      pointOnSegment = function(line, x, y, allowance) {
+        var xMax, xMin, yMax, yMin;
+        if (allowance == null) {
+          allowance = 0;
+        }
+        xMin = Math.min(line.start.x, line.end.x);
+        xMax = Math.max(line.start.x, line.end.x);
+        yMin = Math.min(line.start.y, line.end.y);
+        yMax = Math.max(line.start.y, line.end.y);
+        return (pointOnLine(line, x, y, allowance)) && (x >= xMin && x <= xMax) && (y >= yMin && y <= yMax);
+      };
+      closestPt = pointOnSegment(segment, pt.x, pt.y, 0.01) ? pt : (distanceToFrom(segment.start)) < (distanceToFrom(segment.end)) ? segment.start : segment.end;
+      if (game != null) {
+        game.debug.geom(new Phaser.Circle(closestPt.x, closestPt.y, 20), colorCode);
+      }
+      pts.push({
+        pt: closestPt,
+        segment: segment
+      });
     }
     if (pts.length > 1) {
       return _(pts).map(function(pt) {
@@ -12992,17 +13110,53 @@ Grind = (function(superClass) {
   };
 
   Grind.prototype._nudgeBalance = function(isLeft, deltaTime) {
-    return this._balance += k.BalanceNudgePower * (isLeft ? -1 : 1);
+    return console.log('DEPRECATED: _nudgeBalance');
   };
 
   Grind.prototype._updateBalance = function(player, game) {
     var closest, offset;
+    console.log('DEPRECATED: _updateBalance');
     closest = this._closestPointOnLine(player.sprite.body, [this.activeSegment]);
     if (closest != null) {
-      offset = Phaser.Point.distance(closest.pt, new Phaser.Point(player.sprite.body.x, player.sprite.body.y));
-      this._balance *= 1 + offset * k.RailOffsetBalanceRatio * game.time.physicsElapsed;
-      return console.log(offset * k.RailOffsetBalanceRatio, offset);
+      return offset = Phaser.Point.distance(closest.pt, new Phaser.Point(player.sprite.body.x, player.sprite.body.y));
     }
+  };
+
+  Grind.prototype._alignLocalVelocity = function(arg, heading) {
+    var angle, balance, forward, forwardVec, isHeadedAlongRail, localV;
+    forward = arg.forward, balance = arg.balance, isHeadedAlongRail = arg.isHeadedAlongRail;
+    localV = new Phaser.Point(forward, balance);
+    forwardVec = new Phaser.Point(1, 0);
+    angle = this._angleBetween(forwardVec, heading);
+    return Phaser.Point.rotate(localV, 0, 0, angle);
+  };
+
+  Grind.prototype._lineToVector = function(line, options) {
+    var r;
+    if (options == null) {
+      options = {};
+    }
+    _.defaults(options, {
+      negate: false,
+      normalize: false
+    });
+    r = Phaser.Point.subtract(line.end, line.start);
+    if (options.normalize) {
+      Phaser.Point.normalize(r, r);
+    }
+    if (options.negate) {
+      Phaser.Point.negative(r, r);
+    }
+    return r;
+  };
+
+  Grind.prototype._angleBetween = function(from, to) {
+    var angle;
+    angle = (Math.atan2(to.y, to.x)) - (Math.atan2(from.y, from.x));
+    if (angle < 0) {
+      angle += 2 * Math.PI;
+    }
+    return angle;
   };
 
   return Grind;
@@ -13023,7 +13177,7 @@ Grapple = (function(superClass) {
   }
 
   Grapple.prototype.accept = function(player, game, input, out_data) {
-    var defaultGrappleVelocity, didGrapple, grappleOn, grappleTile, i, len1, ref;
+    var defaultGrappleVelocity, didGrapple, grappleOn, grappleTile, i, len, ref;
     if (this.grappleActive) {
       this._isMovingLeft(player);
       defaultGrappleVelocity = this._isMovingLeft(player) ? Phaser.Point.multiply(k.DefaultGrappleVelocity, new Phaser.Point(-1, 1)) : k.DefaultGrappleVelocity;
@@ -13034,7 +13188,7 @@ Grapple = (function(superClass) {
       }
       didGrapple = false;
       ref = this.grappleableGroups;
-      for (i = 0, len1 = ref.length; i < len1; i++) {
+      for (i = 0, len = ref.length; i < len; i++) {
         grappleOn = ref[i];
         game.physics.arcade.collide(this.grappleSprite, grappleOn, function() {
           return didGrapple = true;
@@ -13161,16 +13315,106 @@ Grapple = (function(superClass) {
 
 })(PlayerState);
 
+Fly = (function(superClass) {
+  extend(Fly, superClass);
+
+  function Fly() {
+    return Fly.__super__.constructor.apply(this, arguments);
+  }
+
+  Fly.prototype.name = 'FLY';
+
+  Fly.prototype.accept = function(player, game, input, out_data) {
+    out_data.previousMode = player.modeCode;
+    return input.keys.fly.edge.down;
+  };
+
+  Fly.prototype.enter = function(player, game, data) {
+    player.sprite.body.velocity.set(0, 0);
+    this.previousMode = data.previousMode;
+    player.sprite.body.allowGravity = false;
+    this.wait = true;
+    return setTimeout((function(_this) {
+      return function() {
+        return _this.wait = false;
+      };
+    })(this));
+  };
+
+  Fly.prototype.exit = function(player, game) {
+    return player.sprite.body.allowGravity = true;
+  };
+
+  Fly.prototype.update = function(player, game, input) {
+    var _closestPointOnLine, closest, grindOn, ground, i, j, len, len1, onRail, ref, ref1, segment;
+    if (input.keys.left.isDown) {
+      player.sprite.body.position.x -= 300 * game.time.physicsElapsed;
+    }
+    if (input.keys.right.isDown) {
+      player.sprite.body.position.x += 300 * game.time.physicsElapsed;
+    }
+    if (input.keys.up.isDown) {
+      player.sprite.body.position.y -= 300 * game.time.physicsElapsed;
+    }
+    if (input.keys.down.isDown) {
+      player.sprite.body.position.y += 300 * game.time.physicsElapsed;
+    }
+    _closestPointOnLine = Grind.prototype._closestPointOnLine;
+    onRail = {};
+    ground = false;
+    ref = player.grindableGroups;
+    for (i = 0, len = ref.length; i < len; i++) {
+      grindOn = ref[i];
+      game.physics.arcade.collide(player.sprite, grindOn, ((function(_this) {
+        return function(player, railBlock) {
+          _this.onRail = {
+            polyline: railBlock.railPolyline,
+            activeSegment: railBlock.railLineSegment
+          };
+          return ground = true;
+        };
+      })(this)), ((function(_this) {
+        return function(player, railBlock) {
+          var ref1;
+          return railBlock.railLineSegment !== ((ref1 = _this.onRail) != null ? ref1.activeSegment : void 0);
+        };
+      })(this)));
+      if (ground) {
+        break;
+      }
+    }
+    if (this.onRail) {
+      closest = _closestPointOnLine(player.sprite.body, this.onRail.polyline.segments, game);
+      ref1 = this.onRail.polyline.segments;
+      for (j = 0, len1 = ref1.length; j < len1; j++) {
+        segment = ref1[j];
+        game.debug.geom(segment, 'rgba(255, 0, 0, 1)');
+      }
+      if (closest != null) {
+        game.debug.geom(new Phaser.Circle(closest.pt.x, closest.pt.y, 30), 'rgba(0, 255, 0, 0.5)');
+      } else {
+        console.log('no closest?');
+      }
+    }
+    if ((!this.wait) && input.keys.fly.edge.down) {
+      return player.setMode(this.previousMode);
+    }
+  };
+
+  return Fly;
+
+})(PlayerState);
+
 module.exports = {
   PlayerState: PlayerState,
-  Modes: [Walk, Jump, Fall, Grind, Grapple]
+  Modes: [Walk, Jump, Fall, Grind, Grapple, Fly]
 };
 
 module.exports = _.extend(module.exports, modeCodes);
 
 
 },{"Constants":2,"lodash":1}],6:[function(require,module,exports){
-var EdgeKey, Player, PlayerState, _, create, input, k, preload, previousInput, state, update;
+var EdgeKey, Player, PlayerState, Polyline, _, create, input, k, preload, previousInput, state, update;
 
 _ = require('lodash');
 
@@ -13181,6 +13425,8 @@ EdgeKey = require('EdgeKey');
 Player = require('Player');
 
 PlayerState = require('PlayerState');
+
+Polyline = require('util/Polyline');
 
 state = {};
 
@@ -13201,11 +13447,12 @@ preload = function(game) {
 };
 
 create = function(game) {
-  var blockLayer, fromX, fromY, grappleGroup, grappleLayer, groundLevel, i, j, l, len, len1, line, m, map, platforms, player, rail, railLayer, railLines, railPolyline, rails, ref, ref1, ref2, ref3, tile, tiles, toX, toY;
+  var blockLayer, castTiles, fromX, fromY, grappleGroup, grappleLayer, i, j, l, len, len1, line, m, map, platforms, player, rail, railLayer, railLines, railSegments, rails, ref, ref1, ref2, ref3, tile, tiles, toX, toY;
   map = game.add.tilemap('my-map');
   map.addTilesetImage('tileset2', 'my-tileset');
   map.addTilesetImage('rails_tileset', 'rail-tileset');
   blockLayer = map.createLayer('ground');
+  game.physics.arcade.enable(blockLayer);
   map.setCollision(10, true, blockLayer);
   blockLayer.resizeWorld();
   railLayer = map.createLayer('rails');
@@ -13220,30 +13467,33 @@ create = function(game) {
   rails.enableBody = true;
   grappleGroup = game.add.group();
   grappleGroup.enableBody = true;
-  groundLevel = game.world.height - 64;
   railLines = [];
   ref = map.objects['rail_lines'];
   for (j = 0, len = ref.length; j < len; j++) {
     rail = ref[j];
-    railPolyline = [];
+    railSegments = [];
+    tiles = [];
     for (i = l = 0, ref1 = rail.polyline.length - 1; 0 <= ref1 ? l < ref1 : l > ref1; i = 0 <= ref1 ? ++l : --l) {
       if (rail.polyline != null) {
         ref2 = rail.polyline[i], fromX = ref2[0], fromY = ref2[1];
         ref3 = rail.polyline[i + 1], toX = ref3[0], toY = ref3[1];
         line = new Phaser.Line(fromX + rail.x, fromY + rail.y, toX + rail.x, toY + rail.y);
-        tiles = railLayer.getRayCastTiles(line);
-        for (m = 0, len1 = tiles.length; m < len1; m++) {
-          tile = tiles[m];
-          tile.setCollision(false, false, true, true);
+        castTiles = railLayer.getRayCastTiles(line);
+        for (m = 0, len1 = castTiles.length; m < len1; m++) {
+          tile = castTiles[m];
           tile.railLineSegment = line;
-          tile.railPolyline = railPolyline;
+          tile.setCollision(false, false, true, true);
         }
-        railPolyline.push(line);
+        tiles.push.apply(tiles, castTiles);
+        railSegments.push(line);
         railLines.push(line);
       }
     }
+    tiles.forEach(function(tile) {
+      return tile.railPolyline = new Polyline(railSegments);
+    });
   }
-  player = new Player(game, 32, 0, 'dude', PlayerState.FALL, {
+  player = new Player(game, 32, 1000, 'dude', PlayerState.FALL, {
     walkableGroups: [blockLayer],
     grindableGroups: [railLayer],
     grappleableGroups: [grappleLayer]
@@ -13264,11 +13514,13 @@ create = function(game) {
       'debug': Phaser.Keyboard.D,
       'jump': Phaser.Keyboard.SPACEBAR,
       'grapple': Phaser.Keyboard.Z,
-      'grind': Phaser.Keyboard.X
+      'grind': Phaser.Keyboard.X,
+      'fly': Phaser.Keyboard.F
     })
   };
   input.keys.jump = EdgeKey.fromKey(input.keys.jump);
   input.keys.grapple = EdgeKey.fromKey(input.keys.grapple);
+  input.keys.fly = EdgeKey.fromKey(input.keys.fly);
   return game.camera.follow(player.sprite, Phaser.Camera.FOLLOW_PLATFORMER);
 };
 
@@ -13289,14 +13541,64 @@ update = function(game) {
   }
 };
 
-new Phaser.Game(800, 600, Phaser.AUTO, '', {
+new Phaser.Game(1600, 1200, Phaser.AUTO, '', {
   preload: preload,
   create: create,
   update: update
 });
 
 
-},{"Constants":2,"EdgeKey":3,"Player":4,"PlayerState":5,"lodash":1}]},{},[6])
+},{"Constants":2,"EdgeKey":3,"Player":4,"PlayerState":5,"lodash":1,"util/Polyline":7}],7:[function(require,module,exports){
+var Polyline, _;
+
+_ = require('lodash');
+
+
+/*
+Wraps multiple Phaser.Line objects into a polyline.
+ */
+
+Polyline = (function() {
+  Polyline.calculateLength = function(segments) {
+    return _(segments).map(_.property('length')).reduce(_.add);
+  };
+
+  function Polyline(segments) {
+    Object.defineProperty(this, 'segments', {
+      value: segments,
+      writable: false,
+      enumerable: true,
+      configurable: false
+    });
+    this._detailedSegments = this.segments.map((function(_this) {
+      return function(segment, idx) {
+        segment.__polylineIndex = idx;
+        return {
+          segment: segment,
+          next: _this.segments[idx + 1],
+          previous: _this.segments[idx - 1]
+        };
+      };
+    })(this));
+    this.length = Polyline.calculateLength(this.segments);
+  }
+
+  Polyline.prototype.next = function(segment) {
+    return this._detailedSegments[segment.__polylineIndex].next;
+  };
+
+  Polyline.prototype.previous = function(segment) {
+    return this._detailedSegments[segment.__polylineIndex].previous;
+  };
+
+  return Polyline;
+
+})();
+
+module.exports = Polyline;
+
+
+},{"lodash":1}]},{},[6])
 
 
 //# sourceMappingURL=app.js.map

@@ -7,6 +7,7 @@ modeCodes =
   FALL: 2
   GRIND: 3
   GRAPPLE: 4
+  FLY: 5
 
 class PlayerState
   name: 'NONE'
@@ -97,6 +98,7 @@ class Walk extends PlayerState
       player._modes[modeCodes.JUMP]
       player._modes[modeCodes.FALL]
       player._modes[modeCodes.GRIND]
+      player._modes[modeCodes.FLY]
     ]
 
 
@@ -191,6 +193,24 @@ class Fall extends PlayerState
 
 
 class Grind extends PlayerState
+
+  ### State fields
+
+  canAccept
+  cooldownTimer
+
+  popped
+
+  activeSegment
+  previousSegment
+  rail
+
+  _localVelocity:
+    forward
+    balance
+    isHeadedAlongRail
+  ###
+
   name: 'GRIND'
   constructor: (player, game) ->
     @canAccept = true
@@ -228,79 +248,130 @@ class Grind extends PlayerState
 
   # called when state is entered
   enter: (player, game, data) ->
-    @_balance = 0
-    @rail = data.rail.polyline
+    # @_balance = 0
+
+    @_setActiveRail data.rail.polyline
     @activeSegment = data.rail.activeSegment
+    game.debug.geom @activeSegment, 'rgba(255, 255, 0, 1)'
+    @previousSegment = @activeSegment
+
+    @_localVelocity =
+      forward: Math.min player.sprite.body.speed, k.MaxGrindSpeed
+      balance: 0      # just a velocity (pt/s); when going left-right, up is negative
+      isHeadedAlongRail: (player.sprite.body.velocity.dot (@_lineToVector @activeSegment)) > 0
 
     pos = (_.pick player.sprite.body, 'x', 'y')
-    {pt, segment} = @_closestPointOnLine pos, @rail
+    {pt, segment} = @_closestPointOnLine pos, @rail.segments
 
-    len = 0
-    for s in @rail
-      if s is segment
-        len += Phaser.Point.distance s.start, pt
-        break
-      else
-        len += s.length
-    @progress = len / @_polylineLength @rail
-
-    heading =
-      new Phaser.Point \
-        Math.cos @activeSegment.angle,
-        Math.sin @activeSegment.angle
-    @ratioVelocity = @_distanceToLengthRatio player.sprite.body.speed, @rail
-
-    if (heading.dot player.sprite.body.velocity.normalize()) < 0
-      @ratioVelocity *= -1
+    heading = @_lineToVector @activeSegment, negate: true
 
     @popped = _.pick player.sprite.body, 'friction'
 
     _.assign player.sprite.body,
       friction: 0
-      velocity:
-        x: 0
-        y: 0
 
 
   # called when state is exited
   exit: (player, game) ->
     _.assign player.sprite.body, @popped
-    heading = new Phaser.Point \
-      Math.cos @activeSegment.angle,
-      Math.sin @activeSegment.angle
-    player.sprite.body.velocity =
-      heading.setMagnitude (@_lengthRatioToDistance @ratioVelocity, @rail)
     do @cooldownTimer.start
 
 
   update: (player, game, input) ->
-    @progress += @ratioVelocity * game.time.physicsElapsed
+    # find active segment
 
-    result = @_lineRatioToPoint @progress, @rail
-    if not result?
+    ## we can't go to a segment we've been to in the past
+    remainingSegments = do =>
+      t = []
+      x = @activeSegment
+      while x?
+        t.push x
+        x =
+          if @_localVelocity.isHeadedAlongRail
+          then @rail.next x
+          else @rail.previous x
+      return t
+    for s in remainingSegments
+      game.debug.geom s, 'rgba(0, 255, 0, 0.5)'
+
+    {pt, segment} = @_closestPointOnLine player.sprite.body, remainingSegments
+    # player.sprite.body.x = pt.x
+    # player.sprite.body.y = pt.y
+    game.debug.geom (new Phaser.Circle pt.x, pt.y, 20), 'rgba(255, 255, 0, 1)'
+
+    if (Phaser.Point.distance pt, player.sprite.body) > 100
       player.setMode modeCodes.FALL
-    else
-      if input.keys.up.isDown
-        @_nudgeBalance true, game.time.physicsElapsed
-      else if input.keys.down.isDown
-        @_nudgeBalance false, game.time.physicsElapsed
+      return
 
-      {segment, point} = result
-      @activeSegment = segment
-      player.sprite.body.x = point.x
-      player.sprite.body.y =
-        point.y - player.sprite.body.halfHeight + (@_balance * k.BalanceSwayAmount)
 
-      @_updateBalance player, game
+    heading = @_lineToVector @activeSegment,
+      normalize: true
+      negate: not @_localVelocity.isHeadedAlongRail
 
-      if not (-6 < @_balance < 6)
-        player.setMode modeCodes.FALL
-      else
-        switchMode = @checkAccepts player, game, input, [
-          player._modes[modeCodes.GRAPPLE]
-          player._modes[modeCodes.JUMP]
-        ]
+    # deal with corners
+    if @activeSegment isnt @previousSegment
+      previousHeading = @_lineToVector @previousSegment,
+        normalize: true
+        negate: not @_localVelocity.isHeadedAlongRail
+      # FIXME
+      theta = @_angleBetween heading, previousHeading
+      bendFactor = (-(Math.cos theta) + 1) / 2 # between 0 and 1
+      @_localVelocity.forward +=
+        k.BendAcceleration *
+        bendFactor *
+        @_localVelocity.balance *
+        if (Math.sin theta) < 0 then 1 else -1
+      @previousSegment = @activeSegment
 
+    ###
+    0 : [0, pi/2)
+    1 : [pi/2, pi)
+    2 : [pi, 3pi/2)
+    3 : [3pi/2, 2pi)
+    ###
+    angle = (@activeSegment.angle + 2 * Math.PI) % (2 * Math.PI)
+    quadrant = switch
+      when 0 <= angle < (Math.PI / 2) then 0
+      when (Math.PI / 2) <= angle < Math.PI then 1
+      when Math.PI <= angle < (3 * Math.PI / 2) then 2
+      when (3 * Math.PI / 2) <= angle < (2 * Math.PI) then 3
+    negativeDown = do =>
+      if @_localVelocity.isHeadedAlongRail and ((quadrant is 0) or (quadrant is 3))
+        return input.keys.up.isDown
+      if not @_localVelocity.isHeadedAlongRail and ((quadrant is 0) or (quadrant is 3))
+        return input.keys.down.isDown
+      if @_localVelocity.isHeadedAlongRail and not ((quadrant is 0) or (quadrant is 3))
+        return input.keys.down.isDown
+      if not @_localVelocity.isHeadedAlongRail and not ((quadrant is 0) or (quadrant is 3))
+        return input.keys.up.isDown
+    positiveDown = do =>
+      if @_localVelocity.isHeadedAlongRail and ((quadrant is 0) or (quadrant is 3))
+        return input.keys.down.isDown
+      if not @_localVelocity.isHeadedAlongRail and ((quadrant is 0) or (quadrant is 3))
+        return input.keys.up.isDown
+      if @_localVelocity.isHeadedAlongRail and not ((quadrant is 0) or (quadrant is 3))
+        return input.keys.up.isDown
+      if not @_localVelocity.isHeadedAlongRail and not ((quadrant is 0) or (quadrant is 3))
+        return input.keys.down.isDown
+
+    # player balance control
+    if negativeDown
+      @_localVelocity.balance -= k.BalanceAcceleration
+    if positiveDown
+      @_localVelocity.balance += k.BalanceAcceleration
+
+    # convert and assign velocity
+    alignedVelocity = @_alignLocalVelocity @_localVelocity, heading
+    player.sprite.body.velocity.set alignedVelocity.x, alignedVelocity.y
+
+    switchMode = @checkAccepts player, game, input, [
+      player._modes[modeCodes.GRAPPLE]
+      player._modes[modeCodes.JUMP]
+    ]
+
+
+  _setActiveRail: (railPolyline) ->
+    @rail = railPolyline
 
   _polylineLength: (polyline) ->
     _ polyline
@@ -341,6 +412,7 @@ class Grind extends PlayerState
 
 
   # TODO: also optimize
+  # TODO: also, test
   ###
   return: `null` |
     {
@@ -348,18 +420,49 @@ class Grind extends PlayerState
       segment: Phaser.Line - the line segment that `pt` is on
     }
   ###
-  _closestPointOnLine: ({x, y}, segments) ->
+  _closestPointOnLine: ({x, y}, segments, game) ->
+    distanceToFrom = (pt) -> Phaser.Point.distance pt, {x: x, y: y}
+
     pts = []
     for segment in segments
       heading = new Phaser.Line \
         x, y,
-        x + segment.normalX,
-        y + segment.normalY
+        x + segment.normalX * 1000,
+        y + segment.normalY * 1000
+
+      # DEBUG
+      color = _ [segment.start.x, segment.end.x, segment.length]
+        .map (n) -> n % 256
+        .map Math.floor
+        .value()
+      colorCode = "rgba(#{color[0]}, #{color[1]}, #{color[2]}, 1)"
+      game?.debug.geom heading, colorCode
+
       pt = Phaser.Line.intersects segment, heading, false
-      if pt?
-        pts.push
-          pt: pt
-          segment: segment
+
+      pointOnLine = (line, x, y, allowance = 0) ->
+        delta = ((x - line.start.x) * (line.end.y - line.start.y) - (line.end.x - line.start.x) * (y - line.start.y))
+        delta < allowance
+      pointOnSegment = (line, x, y, allowance = 0) ->
+        xMin = Math.min line.start.x, line.end.x
+        xMax = Math.max line.start.x, line.end.x
+        yMin = Math.min line.start.y, line.end.y
+        yMax = Math.max line.start.y, line.end.y
+        (pointOnLine line, x, y, allowance) && (x >= xMin && x <= xMax) && (y >= yMin && y <= yMax)
+
+      closestPt =
+        if pointOnSegment segment, pt.x, pt.y, 0.01
+        then pt
+        else
+          if (distanceToFrom segment.start) < (distanceToFrom segment.end)
+          then segment.start
+          else segment.end
+
+      game?.debug.geom (new Phaser.Circle closestPt.x, closestPt.y, 20), colorCode
+
+      pts.push
+        pt: closestPt
+        segment: segment
     if pts.length > 1
       return _ pts
         .map (pt) ->
@@ -369,19 +472,53 @@ class Grind extends PlayerState
     else
       return pts[0]
 
-
   _nudgeBalance: (isLeft, deltaTime) ->
-    @_balance += k.BalanceNudgePower * (if isLeft then -1 else 1)
+    console.log 'DEPRECATED: _nudgeBalance'
+    # @_balance += k.BalanceNudgePower * (if isLeft then -1 else 1)
 
   _updateBalance: (player, game) ->
+    console.log 'DEPRECATED: _updateBalance'
     # distance to closest point on active segment
     closest = @_closestPointOnLine player.sprite.body, [@activeSegment]
     if closest?
       offset = Phaser.Point.distance \
         closest.pt,
         (new Phaser.Point player.sprite.body.x, player.sprite.body.y)
-      @_balance *= 1 + offset * k.RailOffsetBalanceRatio * game.time.physicsElapsed
-      console.log offset * k.RailOffsetBalanceRatio, offset
+      # @_balance *= 1 + offset * k.RailOffsetBalanceRatio * game.time.physicsElapsed
+
+
+  _alignLocalVelocity: ({forward, balance, isHeadedAlongRail}, heading) ->
+    localV = new Phaser.Point forward, balance
+    # forwardVec = (new Phaser.Point (if isHeadedAlongRail then 1 else -1), 0)
+    forwardVec = new Phaser.Point 1, 0
+
+    angle = @_angleBetween \
+      forwardVec,
+      heading
+
+    return Phaser.Point.rotate \
+      localV,
+      0,
+      0,
+      angle
+
+  _lineToVector: (line, options = {}) ->
+    _.defaults options,
+      negate: false
+      normalize: false
+    r = Phaser.Point.subtract line.end, line.start
+    if options.normalize
+      Phaser.Point.normalize r, r
+    if options.negate
+      Phaser.Point.negative r, r
+    return r
+
+  # god, Phaser, get a vector library jeez
+  _angleBetween: (from, to) ->
+    angle = (Math.atan2 to.y, to.x) - (Math.atan2 from.y, from.x)
+    if angle < 0
+      angle += 2 * Math.PI
+    return angle
 
 
 
@@ -429,9 +566,6 @@ class Grapple extends PlayerState
     @grappleSprite.body.velocity = new Phaser.Point 0, 0
     @grappleSprite.body.x = data.grappleTile.worldX
     @grappleSprite.body.y = data.grappleTile.worldY
-
-    # @_isMovingLeft player = @grappleSprite.body.x < player.sprite.body.x
-    # @_isMovingLeft player = player.sprite.body.velocity.x < 0
 
     @_isMovingClockwise = @_isMovingLeft player
 
@@ -543,6 +677,73 @@ class Grapple extends PlayerState
     return grappleTile
 
 
+
+class Fly extends PlayerState
+  name: 'FLY'
+
+  # check if `player` accepts this mode and transitions
+  # puts any data in `out_data`
+  # returns true if accepted, else false
+  accept: (player, game, input, out_data) ->
+    out_data.previousMode = player.modeCode
+    input.keys.fly.edge.down
+
+  # called when state is entered
+  enter: (player, game, data) ->
+    player.sprite.body.velocity.set 0, 0
+    @previousMode = data.previousMode
+    player.sprite.body.allowGravity = false
+    @wait = true
+    setTimeout () => @wait = false
+
+  # called when state is exited
+  exit: (player, game) ->
+    player.sprite.body.allowGravity = true
+
+  update: (player, game, input) ->
+    if input.keys.left.isDown
+      player.sprite.body.position.x -= 300 * game.time.physicsElapsed
+    if input.keys.right.isDown
+      player.sprite.body.position.x += 300 * game.time.physicsElapsed
+    if input.keys.up.isDown
+      player.sprite.body.position.y -= 300 * game.time.physicsElapsed
+    if input.keys.down.isDown
+      player.sprite.body.position.y += 300 * game.time.physicsElapsed
+
+
+    _closestPointOnLine = Grind.prototype._closestPointOnLine
+    onRail = {}
+    ground = false
+    for grindOn in player.grindableGroups
+      game.physics.arcade.collide \
+        player.sprite,
+        grindOn,
+        ((player, railBlock) =>
+          @onRail =
+            polyline: railBlock.railPolyline
+            activeSegment: railBlock.railLineSegment
+          ground = true),
+        ((player, railBlock) =>
+          railBlock.railLineSegment isnt @onRail?.activeSegment)
+      if ground
+        break
+
+    if @onRail
+      closest = _closestPointOnLine player.sprite.body, @onRail.polyline.segments, game
+      for segment in @onRail.polyline.segments
+        game.debug.geom segment, 'rgba(255, 0, 0, 1)'
+      if closest?
+        game.debug.geom \
+          (new Phaser.Circle closest.pt.x, closest.pt.y, 30),
+          'rgba(0, 255, 0, 0.5)'
+      else
+        console.log 'no closest?'
+
+
+    if (not @wait) and input.keys.fly.edge.down
+      player.setMode @previousMode
+
+
 module.exports =
   PlayerState: PlayerState
   Modes: [
@@ -551,6 +752,7 @@ module.exports =
     Fall
     Grind
     Grapple
+    Fly
   ]
 
 module.exports = _.extend module.exports, modeCodes

@@ -24,9 +24,9 @@ module.exports =
 
   # grinding
   GrindCooldownTime: 100
-  BalanceSwayAmount: 100
-  BalanceNudgePower: 0.05
-  RailOffsetBalanceRatio: 0.05
+  BalanceAcceleration: 2
+  MaxGrindSpeed: 300
+  BendAcceleration: 10
 
   PlayerBodyProperties:
     bounce:
@@ -36,10 +36,6 @@ module.exports =
     friction:
       x: 0.2
       y: 0.2
-    # gravity:
-    #   x: 0
-    #   y: 0
-    # allowGravity: false
     allowGravity: true
 
   MinGrappleSpeed: 500
